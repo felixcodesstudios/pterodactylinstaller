@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================
-# Pterodactyl Wings Installer (Fixed Version)
+# Pterodactyl Full Stack Installer
 # ============================================
 
 # Colors
@@ -9,140 +9,147 @@ RED='\033[0;31m'
 GRN='\033[0;32m'
 CYN='\033[0;36m'
 YEL='\033[1;33m'
-NC='\033[0m' # No Color
+MAG='\033[0;35m'
+NC='\033[0m'
 
-echo -e "${CYN}Installing Pterodactyl Wings...${NC}"
-
-# 1. Clean up existing containers (IMPORTANT)
-echo -e "${YEL}Cleaning up existing containers...${NC}"
-docker-compose down --remove-orphans 2>/dev/null || true
-docker rm -f wings 2>/dev/null || true
-
-# 2. Create directory structure
-echo -e "${YEL}Creating directories...${NC}"
-mkdir -p /etc/pterodactyl/{data,logs,ssl}
-cd /etc/pterodactyl || exit
-
-# 3. Create fixed docker-compose.yml
-echo -e "${YEL}Creating docker-compose.yml...${NC}"
-cat << 'EOF' > docker-compose.yml
-version: '3.8'
-
-services:
-  wings:
-    image: ghcr.io/pterodactyl/wings:latest
-    container_name: wings
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    user: root
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./config.yml:/etc/pterodactyl/config.yml:ro
-      - ./data:/var/lib/pterodactyl
-      - ./logs:/var/log/pterodactyl
-      - ./ssl:/etc/ssl/certs
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /tmp:/tmp
-    environment:
-      TZ: UTC
-    command: ["/usr/local/bin/wings", "--debug"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+clear
+echo -e "${MAG}"
+cat << "EOF"
+╔══════════════════════════════════════════════════╗
+║      Pterodactyl Control Panel + Wings           ║
+║               Complete Installer                 ║
+╚══════════════════════════════════════════════════╝
 EOF
+echo -e "${NC}"
 
-# 4. Create minimal config.yml
-echo -e "${YEL}Creating config.yml...${NC}"
-cat << 'EOF' > config.yml
----
-debug: true
+# Function to check Docker
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YEL}Installing Docker...${NC}"
+        curl -fsSL https://get.docker.com -o get-docker.sh
+        sh get-docker.sh
+        rm get-docker.sh
+    fi
+    
+    if ! command -v docker-compose &> /dev/null; then
+        echo -e "${YEL}Installing Docker Compose...${NC}"
+        apt-get update
+        apt-get install -y docker-compose
+    fi
+}
+
+# Function to install Panel
+install_panel() {
+    echo -e "${CYN}Installing Pterodactyl Panel...${NC}"
+    
+    mkdir -p /var/lib/pterodactyl-panel
+    cd /var/lib/pterodactyl-panel
+    
+    # Create panel docker-compose
+    cat << 'EOF' > docker-compose.yml
+version: '3.8'
+services:
+  panel:
+    image: ghcr.io/pterodactyl/panel:latest
+    container_name: pterodactyl-panel
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "./data:/app"
+    environment:
+      APP_URL: http://localhost
+      APP_ENV: production
+EOF
+    
+    docker-compose up -d
+    echo -e "${GRN}Panel installed! Access at: http://$(curl -s ifconfig.me)${NC}"
+}
+
+# Function to install Wings (FIXED)
+install_wings() {
+    echo -e "${CYN}Installing Pterodactyl Wings...${NC}"
+    
+    # Clean up
+    docker stop wings 2>/dev/null || true
+    docker rm wings 2>/dev/null || true
+    
+    # Create directory
+    mkdir -p /etc/pterodactyl
+    cd /etc/pterodactyl
+    
+    # Create wings directory structure
+    mkdir -p {data,logs,config}
+    
+    # Create config file
+    cat > config.yml << 'EOF'
+# Pterodactyl Wings Configuration
+debug: false
 panel:
-  url: "https://your-panel-url.com"
-  token: "CHANGE_ME"
-  timeout: 30
+  url: "http://localhost"
+  token: "ptla_xxxxxxxxxxxx"
 system:
-  data: /var/lib/pterodactyl
+  data: "/var/lib/pterodactyl"
   sftp:
     bind_port: 2022
-docker:
-  network:
-    name: "pterodactyl_nw"
-    interface: "eth0"
 EOF
-
-# 5. Pull the image first
-echo -e "${YEL}Pulling wings image...${NC}"
-docker pull ghcr.io/pterodactyl/wings:latest
-
-# 6. Create network if doesn't exist
-echo -e "${YEL}Creating Docker network...${NC}"
-docker network create pterodactyl_nw 2>/dev/null || true
-
-# 7. Start without --force-recreate first
-echo -e "${YEL}Starting wings container...${NC}"
-docker-compose up -d
-
-# Wait a moment
-sleep 5
-
-# 8. Check if container is running
-if docker ps | grep -q wings; then
-    echo -e "${GRN}✓ Wings container started successfully!${NC}"
     
-    # 9. Now force recreate if needed
-    echo -e "${YEL}Force recreating to ensure clean state...${NC}"
-    docker-compose up -d --force-recreate
-    
-    echo -e "\n${GRN}========================================${NC}"
-    echo -e "${GRN}Installation completed!${NC}"
-    echo -e "========================================${NC}"
-    
-    # Show container info
-    echo -e "\n${CYN}Container status:${NC}"
-    docker-compose ps
-    
-    echo -e "\n${CYN}Logs (last 10 lines):${NC}"
-    docker-compose logs --tail=10 wings
-    
-else
-    echo -e "${RED}Failed to start container. Trying alternative method...${NC}"
-    
-    # Alternative: Run directly with docker run
+    # Run wings with correct command
     docker run -d \
         --name wings \
         --restart unless-stopped \
         --network host \
         --privileged \
         -v /var/run/docker.sock:/var/run/docker.sock \
-        -v /etc/pterodactyl/config.yml:/etc/pterodactyl/config.yml:ro \
-        -v /etc/pterodactyl/data:/var/lib/pterodactyl \
-        -v /etc/pterodactyl/logs:/var/log/pterodactyl \
-        -v /etc/pterodactyl/ssl:/etc/ssl/certs \
-        -v /etc/letsencrypt:/etc/letsencrypt:ro \
-        -v /tmp:/tmp \
-        -e TZ=UTC \
-        ghcr.io/pterodactyl/wings:latest \
-        /usr/local/bin/wings --debug
+        -v /etc/pterodactyl/config.yml:/etc/pterodactyl/config.yml \
+        -v /var/lib/pterodactyl:/var/lib/pterodactyl \
+        ghcr.io/pterodactyl/wings:latest
     
-    echo -e "${YEL}Container started with docker run command${NC}"
-fi
+    echo -e "${GRN}Wings installed!${NC}"
+    echo -e "${YEL}IMPORTANT: Edit /etc/pterodactyl/config.yml with your panel token${NC}"
+}
 
-# 10. Post-install instructions
-echo -e "\n${YEL}IMPORTANT NEXT STEPS:${NC}"
-echo -e "1. Edit /etc/pterodactyl/config.yml:"
-echo -e "   - Set panel.url to your panel URL"
-echo -e "   - Get token from Panel: Settings -> Nodes -> Configuration"
-echo -e "2. Restart wings: docker-compose restart"
-echo -e "3. Check logs: docker-compose logs -f wings"
-echo -e "\n${CYN}Useful commands:${NC}"
-echo -e "  View logs: docker-compose logs -f"
-echo -e "  Restart:   docker-compose restart"
-echo -e "  Stop:      docker-compose down"
-echo -e "  Status:    docker-compose ps"
+# Main menu
+echo -e "${CYN}Select installation type:${NC}"
+echo "1) Install Panel only"
+echo "2) Install Wings only"
+echo "3) Install Panel + Wings"
+echo "4) Exit"
+echo -n "Your choice [1-4]: "
+read choice
 
-# Quick fix command
-echo -e "\n${GRN}If you still have issues, run this command:${NC}"
-echo -e "cd /etc/pterodactyl && docker-compose down && docker-compose up -d --build"
+case $choice in
+    1)
+        check_docker
+        install_panel
+        ;;
+    2)
+        check_docker
+        install_wings
+        ;;
+    3)
+        check_docker
+        install_panel
+        sleep 10
+        install_wings
+        ;;
+    4)
+        echo "Exiting..."
+        exit 0
+        ;;
+    *)
+        echo "Invalid choice"
+        exit 1
+        ;;
+esac
+
+# Post-install info
+echo -e "\n${GRN}════════════════════════════════════════${NC}"
+echo -e "${GRN}Installation Complete!${NC}"
+echo -e "${GRN}════════════════════════════════════════${NC}"
+echo -e "\n${CYN}Quick Commands:${NC}"
+echo "Panel logs: docker-compose -f /var/lib/pterodactyl-panel/docker-compose.yml logs"
+echo "Wings logs: docker logs -f wings"
+echo "Restart wings: docker restart wings"
+echo "Check status: docker ps"
